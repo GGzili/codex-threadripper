@@ -160,9 +160,10 @@ pub fn current_service_inspect_command() -> Result<Option<String>> {
             "systemctl --user status {}.service",
             SERVICE_LABEL
         ))),
-        ServiceManager::WindowsStartup => Ok(Some(format!(
-            "powershell -NoProfile -Command \"Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -like '*codex-threadripper*watch*' }} | Select-Object ProcessId, CommandLine\""
-        ))),
+        ServiceManager::WindowsStartup => Ok(Some(
+            "powershell -NoProfile -Command \"Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*codex-threadripper*watch*' } | Select-Object ProcessId, CommandLine\""
+                .to_string(),
+        )),
     }
 }
 
@@ -773,21 +774,21 @@ fn runtime_dir(codex_home: &Path) -> Result<PathBuf> {
     let tag = codex_home_tag(codex_home);
     #[cfg(target_os = "macos")]
     {
-        return Ok(home_dir()?
+        Ok(home_dir()?
             .join("Library/Application Support/codex-threadripper")
-            .join(tag));
+            .join(tag))
     }
     #[cfg(target_os = "linux")]
     {
-        return Ok(home_dir()?
+        Ok(home_dir()?
             .join(".local/state/codex-threadripper")
-            .join(tag));
+            .join(tag))
     }
     #[cfg(target_os = "windows")]
     {
-        return Ok(windows_local_app_data_dir()?
+        Ok(windows_local_app_data_dir()?
             .join("codex-threadripper")
-            .join(tag));
+            .join(tag))
     }
 }
 
@@ -795,17 +796,17 @@ fn logs_dir(codex_home: &Path) -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         let tag = codex_home_tag(codex_home);
-        return Ok(home_dir()?
+        Ok(home_dir()?
             .join("Library/Logs/codex-threadripper")
-            .join(tag));
+            .join(tag))
     }
     #[cfg(target_os = "linux")]
     {
-        return Ok(runtime_dir(codex_home)?.join("logs"));
+        Ok(runtime_dir(codex_home)?.join("logs"))
     }
     #[cfg(target_os = "windows")]
     {
-        return Ok(runtime_dir(codex_home)?.join("logs"));
+        Ok(runtime_dir(codex_home)?.join("logs"))
     }
 }
 
