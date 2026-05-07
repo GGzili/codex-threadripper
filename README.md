@@ -37,7 +37,7 @@
 
 会话其实还在，只是 `state_5.sqlite` 里每条线程记录了创建它的 provider，切换 provider 之后 Codex 只会显示当前 provider 的线程，其他的就像蒸发了一样。
 
-`codex-threadripper` 就是为了解决这件事而生的。它会把 `CODEX_HOME/state_5.sqlite` 里所有线程的 provider 字段统一收敛到你当前用的那个，这样不管你来回怎么切，`codex resume`、Codex.app 和 app-server 客户端都能看到完整的历史记录。
+`codex-threadripper` 就是为了解决这件事而生的。它会把 `CODEX_HOME/state_5.sqlite` 和 rollout JSONL 首行里的 provider 字段统一收敛到你当前用的那个，这样不管你来回怎么切，`codex resume`、Codex.app 和 app-server 客户端都能看到完整的历史记录。
 
 ## 适合谁用
 
@@ -89,6 +89,9 @@ codex-threadripper status
 # 立刻做一次收敛（会先备份，放心）
 codex-threadripper sync
 
+# 明确把所有历史切到某个 provider 可见桶
+codex-threadripper bucket switch cong
+
 # 在前台持续监听，实时处理新线程
 codex-threadripper watch
 
@@ -99,7 +102,9 @@ codex-threadripper install-service
 ## 命令说明
 
 - `status`：查看当前 provider、SQLite 里各 provider 的线程分布，以及后台服务的运行状态
-- `sync`：立即执行一次收敛。执行前会在 `CODEX_HOME/backups/` 里写一份带时间戳的备份
+- `sync`：立即执行一次收敛。执行前会在 `CODEX_HOME/backups/` 里写一份带时间戳的 SQLite 备份；如果 rollout 首行需要改写，也会写 compact journal
+- `bucket switch <provider>`：把全部历史切到指定 provider 可见桶；首行有 padding 时只做原地 patch
+- `bucket prepare`：给 rollout 首行补足 JSON 空白 padding，让后续 provider 桶切换保持快速
 - `watch`：持续监听 `config.toml` 的变化，同时定时收敛新增的线程记录
 - `print-service-config`：打印当前平台的后台服务配置内容（launchd plist / systemd unit / Windows 启动脚本）
 - `install-service`：把后台服务装到系统里并立即启动
@@ -144,7 +149,7 @@ Here's a situation you might recognize: you switch `model_provider` in Codex, an
 
 Your sessions aren't gone. They're just filed under a different provider in `state_5.sqlite`. Codex only shows threads that match the active provider, so anything created under a different one becomes effectively invisible.
 
-`codex-threadripper` fixes this by rewriting the `model_provider` field on every thread row in `CODEX_HOME/state_5.sqlite` to match whichever provider you have active right now. After that, `codex resume`, Codex.app, and app-server clients all see the full history — no matter how many times you've switched.
+`codex-threadripper` fixes this by rewriting the `model_provider` field on every thread row in `CODEX_HOME/state_5.sqlite` and in the first line of each rollout JSONL to match whichever provider you have active right now. After that, `codex resume`, Codex.app, and app-server clients all see the full history — no matter how many times you've switched.
 
 ## Who this is for
 
@@ -197,6 +202,9 @@ codex-threadripper status
 # Reconcile everything right now (a backup is written first)
 codex-threadripper sync
 
+# Explicitly move all history into one provider visibility bucket
+codex-threadripper bucket switch cong
+
 # Keep watching in the foreground, handling new threads as they arrive
 codex-threadripper watch
 
@@ -207,7 +215,9 @@ codex-threadripper install-service
 ## Commands
 
 - `status`: show the active provider, the per-provider thread counts from SQLite, and whether the background service is running
-- `sync`: reconcile once right now, writing a timestamped backup to `CODEX_HOME/backups/` before touching anything
+- `sync`: reconcile once right now, writing a timestamped SQLite backup to `CODEX_HOME/backups/`; rollout first-line changes also get a compact journal
+- `bucket switch <provider>`: move all history into the requested provider visibility bucket; prepared first lines are patched in place
+- `bucket prepare`: reserve JSON whitespace padding in rollout first lines so future provider bucket switches stay fast
 - `watch`: keep watching `config.toml` for provider changes and periodically reconcile any newly added thread rows
 - `print-service-config`: print the platform-specific service config (launchd plist, systemd unit, or Windows startup script) without installing it
 - `install-service`: write the service config and start the service
