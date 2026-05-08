@@ -35,9 +35,9 @@
 
 你有没有遇到过这种情况：在 Codex 里切到另一个 model_provider，然后发现之前的会话全不见了？打开 Codex.app，列表空空如也；执行 `codex resume`，什么都恢复不了。
 
-会话其实还在，只是 `state_5.sqlite` 里每条线程记录了创建它的 provider，切换 provider 之后 Codex 只会显示当前 provider 的线程，其他的就像蒸发了一样。
+会话其实还在，只是 Codex 的 SQLite 状态库里每条线程记录了创建它的 provider，切换 provider 之后 Codex 只会显示当前 provider 的线程，其他的就像蒸发了一样。
 
-`codex-threadripper` 就是为了解决这件事而生的。它会把 `CODEX_HOME/state_5.sqlite` 和 rollout JSONL 首行里的 provider 字段统一收敛到你当前用的那个，这样不管你来回怎么切，`codex resume`、Codex.app 和 app-server 客户端都能看到完整的历史记录。
+`codex-threadripper` 就是为了解决这件事而生的。它会把 Codex 的 SQLite 状态库和 rollout JSONL 首行里的 provider 字段统一收敛到你当前用的那个，这样不管你来回怎么切，`codex resume`、Codex.app 和 app-server 客户端都能看到完整的历史记录。
 
 ## 适合谁用
 
@@ -102,7 +102,7 @@ codex-threadripper install-service
 ## 命令说明
 
 - `status`：查看当前 provider、SQLite 里各 provider 的线程分布，以及后台服务的运行状态
-- `sync`：立即执行一次收敛。执行前会在 `CODEX_HOME/backups/` 里写一份带时间戳的 SQLite 备份；如果 rollout 首行需要改写，也会写 compact journal
+- `sync`：立即执行一次收敛。执行前会在 SQLite 状态库旁边的 `backups/` 目录里写一份带时间戳的备份；如果 rollout 首行需要改写，也会写 compact journal
 - `bucket switch <provider>`：把全部历史切到指定 provider 可见桶；首行有 padding 时只做原地 patch
 - `bucket prepare`：给 rollout 首行补足 JSON 空白 padding，让后续 provider 桶切换保持快速
 - `watch`：持续监听 `config.toml` 的变化，同时定时收敛新增的线程记录
@@ -120,14 +120,15 @@ codex-threadripper install-service
 
 ## 它会改什么
 
-- `sync` 会在 `CODEX_HOME/backups/` 里创建备份，然后更新 `state_5.sqlite` 里的 `model_provider` 字段
+- `sync` 会在 SQLite 状态库旁边的 `backups/` 目录里创建备份，然后更新 `state_5.sqlite` 里的 `model_provider` 字段
 - `sync` / `bucket switch` 也会按需改写 rollout JSONL 首行里的 provider 可见桶，并写入 compact journal；改写后会恢复原本的文件访问时间和修改时间，避免 Codex.app 的最近会话排序被工具污染
 - `watch` 在运行期间会持续处理新写入的线程记录，保持数据库与 rollout 首行里的 provider 可见桶和当前 provider 对齐
 - `--sqlite-only` 只更新 SQLite，适合只关心数据库索引的场景；当前 Codex.app 也会读取 rollout JSONL 元数据，所以日常可见性修复不建议使用它
+- 默认状态库路径是 `CODEX_HOME/state_5.sqlite`；如果 Codex 配置了 `sqlite_home` 或环境变量 `CODEX_SQLITE_HOME`，`codex-threadripper` 会跟随 Codex 使用对应目录下的 `state_5.sqlite`
 
 ## 平台支持
 
-- `status`、`sync`、`watch` 在任何能访问 `CODEX_HOME/state_5.sqlite` 的环境下都能用
+- `status`、`sync`、`watch` 在任何能访问 Codex SQLite 状态库和 rollout JSONL 的环境下都能用
 - macOS 后台服务使用 `launchd`
 - Linux 后台服务使用 `systemd --user`（没有 systemd 时会退回到独立的后台进程）
 - Windows 后台服务使用启动文件夹里的批处理脚本
@@ -148,9 +149,9 @@ cargo run -- --help
 
 Here's a situation you might recognize: you switch `model_provider` in Codex, and suddenly your session list is empty. `codex resume` finds nothing. The Codex app shows a blank slate.
 
-Your sessions aren't gone. They're just filed under a different provider in `state_5.sqlite`. Codex only shows threads that match the active provider, so anything created under a different one becomes effectively invisible.
+Your sessions aren't gone. They're just filed under a different provider in Codex's SQLite state DB. Codex only shows threads that match the active provider, so anything created under a different one becomes effectively invisible.
 
-`codex-threadripper` fixes this by rewriting the `model_provider` field on every thread row in `CODEX_HOME/state_5.sqlite` and in the first line of each rollout JSONL to match whichever provider you have active right now. After that, `codex resume`, Codex.app, and app-server clients all see the full history — no matter how many times you've switched.
+`codex-threadripper` fixes this by rewriting the `model_provider` field on every thread row in Codex's SQLite state DB and in the first line of each rollout JSONL to match whichever provider you have active right now. After that, `codex resume`, Codex.app, and app-server clients all see the full history — no matter how many times you've switched.
 
 ## Who this is for
 
@@ -216,7 +217,7 @@ codex-threadripper install-service
 ## Commands
 
 - `status`: show the active provider, the per-provider thread counts from SQLite, and whether the background service is running
-- `sync`: reconcile once right now, writing a timestamped SQLite backup to `CODEX_HOME/backups/`; rollout first-line changes also get a compact journal
+- `sync`: reconcile once right now, writing a timestamped backup to the `backups/` directory beside the SQLite state DB; rollout first-line changes also get a compact journal
 - `bucket switch <provider>`: move all history into the requested provider visibility bucket; prepared first lines are patched in place
 - `bucket prepare`: reserve JSON whitespace padding in rollout first lines so future provider bucket switches stay fast
 - `watch`: keep watching `config.toml` for provider changes and periodically reconcile any newly added thread rows
@@ -234,14 +235,15 @@ These legacy command names still work:
 
 ## What it changes
 
-- `sync` writes a backup and then updates the `model_provider` column in `state_5.sqlite`
+- `sync` writes a backup next to the SQLite state DB and then updates the `model_provider` column in `state_5.sqlite`
 - `sync` / `bucket switch` also rewrite the provider visibility bucket in rollout JSONL first lines when needed and write a compact journal; after each rewrite, the original file access and modification times are restored so Codex.app's recent-thread ordering is not polluted by the tool
 - `watch` keeps both SQLite and rollout first-line provider buckets aligned with the active provider as new threads are written
 - `--sqlite-only` updates SQLite only. Use it only when you deliberately do not need rollout JSONL metadata; current Codex.app builds also read rollout metadata for visibility
+- The default state DB is `CODEX_HOME/state_5.sqlite`; if Codex uses `sqlite_home` or `CODEX_SQLITE_HOME`, `codex-threadripper` follows that directory and uses its `state_5.sqlite`
 
 ## Platforms
 
-- `status`, `sync`, and `watch` work anywhere you can access `CODEX_HOME/state_5.sqlite`
+- `status`, `sync`, and `watch` work anywhere you can access Codex's SQLite state DB and rollout JSONL files
 - macOS uses `launchd`
 - Linux uses `systemd --user`, falling back to a detached process when systemd isn't available
 - Windows uses a startup folder script

@@ -46,6 +46,8 @@ use std::time::UNIX_EPOCH;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_PROVIDER: &str = "openai";
+const CODEX_SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
+const STATE_DB_FILENAME: &str = "state_5.sqlite";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 const DEFAULT_BUCKET_PADDING_BYTES: usize = 256;
 const ROLLOUT_PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
@@ -168,6 +170,7 @@ enum BucketCommand {
 #[derive(Debug, Deserialize)]
 struct ConfigToml {
     model_provider: Option<String>,
+    sqlite_home: Option<String>,
 }
 
 #[derive(Debug)]
@@ -815,7 +818,7 @@ fn touches_config_file(event: &notify::Event, config_path: &Path) -> bool {
 
 fn collect_status(codex_home: &Path, provider_override: Option<&str>) -> Result<StatusSummary> {
     let config_path = codex_home.join("config.toml");
-    let sqlite_path = codex_home.join("state_5.sqlite");
+    let sqlite_path = resolve_sqlite_path(codex_home)?;
     let provider = match provider_override {
         Some(provider) => provider.to_string(),
         None => read_provider_from_config(codex_home)?,
@@ -854,7 +857,7 @@ fn reconcile_once_with_progress(
         Some(provider) => provider.to_string(),
         None => read_provider_from_config(codex_home)?,
     };
-    let sqlite_path = codex_home.join("state_5.sqlite");
+    let sqlite_path = resolve_sqlite_path(codex_home)?;
     let started = Instant::now();
     let rollout_summary = reconcile_rollout_metadata_from_sqlite_with_progress(
         &sqlite_path,
@@ -907,7 +910,7 @@ fn reconcile_once_with_backup_and_padding(
         Some(provider) => provider.to_string(),
         None => read_provider_from_config(codex_home)?,
     };
-    let sqlite_path = codex_home.join("state_5.sqlite");
+    let sqlite_path = resolve_sqlite_path(codex_home)?;
     let started = Instant::now();
     let backup_path = create_sqlite_backup_file(&sqlite_path)?;
     let rollout_journal_path =
@@ -919,7 +922,7 @@ fn reconcile_once_with_backup_and_padding(
                 backup_path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .unwrap_or("state_5.sqlite.bak")
+                    .unwrap_or("state-db.bak")
             ));
     let rollout_summary = reconcile_rollout_metadata_from_sqlite_with_progress(
         &sqlite_path,
@@ -947,19 +950,70 @@ fn reconcile_once_with_backup_and_padding(
 }
 
 fn read_provider_from_config(codex_home: &Path) -> Result<String> {
-    let config_path = codex_home.join("config.toml");
-    if !config_path.exists() {
-        return Ok(DEFAULT_PROVIDER.to_string());
-    }
-
-    let raw = std::fs::read_to_string(&config_path)
-        .with_context(|| format!("failed to read {}", config_path.display()))?;
-    let parsed: ConfigToml = toml::from_str(&raw)
-        .with_context(|| format!("failed to parse {}", config_path.display()))?;
+    let parsed = read_codex_config(codex_home)?;
     Ok(parsed
         .model_provider
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_PROVIDER.to_string()))
+}
+
+fn resolve_sqlite_path(codex_home: &Path) -> Result<PathBuf> {
+    let parsed = read_codex_config(codex_home)?;
+    let current_dir =
+        std::env::current_dir().context("failed to resolve current directory for sqlite_home")?;
+    Ok(resolve_sqlite_home_from_config(
+        codex_home,
+        parsed.sqlite_home.as_deref(),
+        std::env::var(CODEX_SQLITE_HOME_ENV).ok().as_deref(),
+        current_dir.as_path(),
+    )
+    .join(STATE_DB_FILENAME))
+}
+
+fn read_codex_config(codex_home: &Path) -> Result<ConfigToml> {
+    let config_path = codex_home.join("config.toml");
+    if !config_path.exists() {
+        return Ok(ConfigToml {
+            model_provider: None,
+            sqlite_home: None,
+        });
+    }
+
+    let raw = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("failed to read {}", config_path.display()))?;
+    toml::from_str(&raw).with_context(|| format!("failed to parse {}", config_path.display()))
+}
+
+fn resolve_sqlite_home_from_config(
+    codex_home: &Path,
+    config_sqlite_home: Option<&str>,
+    env_sqlite_home: Option<&str>,
+    current_dir: &Path,
+) -> PathBuf {
+    if let Some(path) = config_sqlite_home.and_then(trimmed_path) {
+        return resolve_path_relative_to(path, codex_home);
+    }
+    if let Some(path) = env_sqlite_home.and_then(trimmed_path) {
+        return resolve_path_relative_to(path, current_dir);
+    }
+    codex_home.to_path_buf()
+}
+
+fn trimmed_path(value: &str) -> Option<&Path> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(Path::new(trimmed))
+    }
+}
+
+fn resolve_path_relative_to(path: &Path, base: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    }
 }
 
 fn reconcile_rollout_metadata_from_sqlite_with_progress(
@@ -1135,7 +1189,7 @@ fn rewrite_rollout_provider_first_line(
 }
 
 fn prepare_bucket_padding(codex_home: &Path, padding_bytes: usize) -> Result<BucketPrepareSummary> {
-    let sqlite_path = codex_home.join("state_5.sqlite");
+    let sqlite_path = resolve_sqlite_path(codex_home)?;
     let started = Instant::now();
     let targets = rollout_targets_for_scope(&sqlite_path, DEFAULT_PROVIDER, RolloutScope::AllRows)?;
     let journal_path = codex_home
@@ -1526,7 +1580,11 @@ fn create_sqlite_backup_file(sqlite_path: &Path) -> Result<PathBuf> {
         .with_context(|| format!("failed to create {}", backups_dir.display()))?;
 
     let timestamp = unix_timestamp_millis()?;
-    let backup_name = format!("state_5.sqlite.{timestamp}.bak");
+    let sqlite_name = sqlite_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(STATE_DB_FILENAME);
+    let backup_name = format!("{sqlite_name}.{timestamp}.bak");
     let backup_path = backups_dir.join(&backup_name);
     let backup_temp_path = backups_dir.join(format!("{backup_name}.tmp"));
 
@@ -1854,18 +1912,18 @@ fn yes_no(locale: Locale, value: bool) -> &'static str {
 
 fn root_about(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Keep CODEX_HOME/state_5.sqlite aligned with the current model_provider.",
-        Locale::ZhHans => "让 CODEX_HOME/state_5.sqlite 持续对齐当前 model_provider。",
+        Locale::En => "Keep Codex's SQLite state DB aligned with the current model_provider.",
+        Locale::ZhHans => "让 Codex 的 SQLite 状态库持续对齐当前 model_provider。",
     }
 }
 
 fn root_long_about(locale: Locale) -> &'static str {
     match locale {
         Locale::En => {
-            "codex-threadripper is a human-first maintenance tool for Codex thread history.\n\nIt reads the active provider from CODEX_HOME/config.toml and rewrites CODEX_HOME/state_5.sqlite so every thread stays in the same provider bucket. That makes thread lists and resume flows stop fragmenting across providers.\n\nExamples:\n  codex-threadripper status\n  codex-threadripper sync\n  codex-threadripper watch\n  codex-threadripper install-service"
+            "codex-threadripper is a human-first maintenance tool for Codex thread history.\n\nIt reads the active provider from CODEX_HOME/config.toml and rewrites Codex's SQLite state DB so every thread stays in the same provider bucket. The DB defaults to CODEX_HOME/state_5.sqlite, but sqlite_home and CODEX_SQLITE_HOME are respected. That makes thread lists and resume flows stop fragmenting across providers.\n\nExamples:\n  codex-threadripper status\n  codex-threadripper sync\n  codex-threadripper watch\n  codex-threadripper install-service"
         }
         Locale::ZhHans => {
-            "codex-threadripper 是一个面向人的 Codex 线程历史维护工具。\n\n它会读取 CODEX_HOME/config.toml 里的当前 provider，并改写 CODEX_HOME/state_5.sqlite，让所有线程始终落在同一个 provider 桶里。这样线程列表和 resume 流程就不会再被 provider 切碎。\n\n示例：\n  codex-threadripper status\n  codex-threadripper sync\n  codex-threadripper watch\n  codex-threadripper install-service"
+            "codex-threadripper 是一个面向人的 Codex 线程历史维护工具。\n\n它会读取 CODEX_HOME/config.toml 里的当前 provider，并改写 Codex 的 SQLite 状态库，让所有线程始终落在同一个 provider 桶里。状态库默认是 CODEX_HOME/state_5.sqlite，同时会尊重 sqlite_home 和 CODEX_SQLITE_HOME。这样线程列表和 resume 流程就不会再被 provider 切碎。\n\n示例：\n  codex-threadripper status\n  codex-threadripper sync\n  codex-threadripper watch\n  codex-threadripper install-service"
         }
     }
 }
@@ -1965,8 +2023,8 @@ fn status_about(locale: Locale) -> &'static str {
 
 fn sync_about(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Reconcile state_5.sqlite and rollout metadata once right now.",
-        Locale::ZhHans => "立刻收敛 state_5.sqlite 和 rollout 元数据。",
+        Locale::En => "Reconcile Codex's SQLite state DB and rollout metadata once right now.",
+        Locale::ZhHans => "立刻收敛 Codex SQLite 状态库和 rollout 元数据。",
     }
 }
 
@@ -2023,8 +2081,10 @@ fn poll_interval_help(locale: Locale) -> &'static str {
 
 fn sqlite_only_help(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Only update state_5.sqlite; leave rollout JSONL metadata untouched.",
-        Locale::ZhHans => "只更新 state_5.sqlite，不改 rollout JSONL 元数据。",
+        Locale::En => {
+            "Only update Codex's SQLite state DB; leave rollout JSONL metadata untouched."
+        }
+        Locale::ZhHans => "只更新 Codex SQLite 状态库，不改 rollout JSONL 元数据。",
     }
 }
 
@@ -2500,6 +2560,8 @@ mod tests {
     use super::reconcile_rollout_metadata_from_sqlite_with_progress;
     use super::reconcile_sqlite_in_place;
     use super::reconcile_sqlite_with_backup;
+    use super::resolve_sqlite_home_from_config;
+    use super::resolve_sqlite_path;
     use super::validate_provider_override;
     use super::validate_provider_override_args;
     use crate::service::ServiceManager;
@@ -2613,6 +2675,47 @@ mod tests {
     }
 
     #[test]
+    fn resolves_sqlite_path_from_config_sqlite_home() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let sqlite_home = dir.path().join("custom-state");
+        fs::write(
+            dir.path().join("config.toml"),
+            format!("sqlite_home = \"{}\"\n", sqlite_home.display()),
+        )?;
+
+        let sqlite_path = resolve_sqlite_path(dir.path())?;
+
+        assert_eq!(sqlite_path, sqlite_home.join("state_5.sqlite"));
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_sqlite_home_env_after_config() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let current_dir = dir.path().join("project");
+
+        let config_wins = resolve_sqlite_home_from_config(
+            dir.path(),
+            Some("configured-state"),
+            Some("env-state"),
+            current_dir.as_path(),
+        );
+        let env_fallback = resolve_sqlite_home_from_config(
+            dir.path(),
+            Some("   "),
+            Some("env-state"),
+            current_dir.as_path(),
+        );
+        let default_home =
+            resolve_sqlite_home_from_config(dir.path(), None, None, current_dir.as_path());
+
+        assert_eq!(config_wins, dir.path().join("configured-state"));
+        assert_eq!(env_fallback, current_dir.join("env-state"));
+        assert_eq!(default_home, dir.path());
+        Ok(())
+    }
+
+    #[test]
     fn rejects_blank_provider_override() {
         let err = validate_provider_override(Locale::En, Some("   ")).unwrap_err();
         assert!(err.to_string().contains("provider must contain"));
@@ -2632,6 +2735,10 @@ mod tests {
     fn reconcile_once_returns_error_when_db_missing() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let sqlite_path = dir.path().join("state_5.sqlite");
+        fs::write(
+            dir.path().join("config.toml"),
+            format!("sqlite_home = \"{}\"\n", dir.path().display()),
+        )?;
 
         let err = reconcile_once(dir.path(), Some("openai"), RolloutScope::None).unwrap_err();
 
