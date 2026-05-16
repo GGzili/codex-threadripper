@@ -420,15 +420,12 @@ fn build_windows_startup_vbs(
     provider_override: Option<&str>,
     poll_interval: Duration,
 ) -> String {
-    let command = format!(
-        "cmd.exe /c {}",
-        watch_command_line(
-            exe_path,
-            codex_home,
-            provider_override,
-            poll_interval,
-            ShellFlavor::Cmd
-        ),
+    let command = watch_command_line(
+        exe_path,
+        codex_home,
+        provider_override,
+        poll_interval,
+        ShellFlavor::Cmd,
     );
 
     format!(
@@ -1079,6 +1076,8 @@ mod tests {
         assert!(script.contains(r#"CreateObject("WScript.Shell")"#));
         assert!(script.contains("shell.Run"));
         assert!(script.contains(", 0, False"));
+        assert!(!script.contains("cmd.exe /c"));
+        assert!(script.contains(r#""C:\Program Files\codex-threadripper\codex-threadripper.exe""#));
         assert!(script.contains("watch --poll-interval-ms 1500"));
     }
 }
