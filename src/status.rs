@@ -85,7 +85,7 @@ pub fn print_status(locale: Locale, summary: &StatusSummary) {
     );
     println!(
         "  {}: {}",
-        locale::status_plist_path_label(locale),
+        locale::status_config_path_label(locale),
         summary.service_status.config_path.display()
     );
     println!(
@@ -221,16 +221,16 @@ pub fn print_install_service_summary(
     poll_interval: Duration,
     summary: &ServiceInstallSummary,
 ) {
-    println!("{}", locale::install_launchd_done(locale));
+    println!("{}", locale::service_installed_message(locale));
     println!(
         "{}: {}",
         locale::status_service_manager_label(locale),
         service::manager_name(summary.manager)
     );
-    println!("{}", locale::launchd_label_message(locale, service::SERVICE_LABEL));
-    println!("{}", locale::launchd_plist_message(locale, &summary.config_path));
-    println!("{}", locale::launchd_codex_home_message(locale, codex_home));
-    println!("{}", locale::launchd_polling_message(locale, poll_interval));
+    println!("{}", locale::service_label_message(locale, service::SERVICE_LABEL));
+    println!("{}", locale::service_config_path_message(locale, &summary.config_path));
+    println!("{}", locale::service_codex_home_message(locale, codex_home));
+    println!("{}", locale::service_polling_message(locale, poll_interval));
     println!("{}", locale::service_log_message(locale, &summary.log_path));
 }
 

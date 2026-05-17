@@ -12,10 +12,18 @@ pub const STATE_DB_FILENAME: &str = "state_5.sqlite";
 pub const DEFAULT_BUCKET_PADDING_BYTES: usize = 256;
 
 pub fn default_codex_home() -> PathBuf {
-    std::env::var_os("HOME")
+    // Cross-platform home detection: HOME (Unix), USERPROFILE (Windows cmd),
+    // fall back to HOMEDRIVE+HOMEPATH (legacy Windows)
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".codex")
+        .or_else(|| {
+            let drive = std::env::var_os("HOMEDRIVE")?;
+            let path = std::env::var_os("HOMEPATH")?;
+            Some(PathBuf::from(drive).join(path))
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+    home.join(".codex")
 }
 
 pub fn read_provider_from_config(codex_home: &Path) -> Result<String> {

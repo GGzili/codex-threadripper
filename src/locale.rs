@@ -249,28 +249,28 @@ pub fn sqlite_only_help(locale: Locale) -> &'static str {
     }
 }
 
-pub fn print_plist_about(locale: Locale) -> &'static str {
+pub fn print_service_config_about(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Print the platform-specific background service config for this tool.",
         Locale::ZhHans => "打印这个工具在当前平台上的后台服务配置。",
     }
 }
 
-pub fn install_launchd_about(locale: Locale) -> &'static str {
+pub fn install_service_about(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Install and start the platform-specific background service.",
         Locale::ZhHans => "安装并启动当前平台上的后台服务。",
     }
 }
 
-pub fn uninstall_launchd_about(locale: Locale) -> &'static str {
+pub fn uninstall_service_about(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Stop and remove the platform-specific background service.",
         Locale::ZhHans => "停止并移除当前平台上的后台服务。",
     }
 }
 
-pub fn launchd_poll_help(locale: Locale) -> &'static str {
+pub fn service_poll_help(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Polling interval for the background watcher.",
         Locale::ZhHans => "后台 watcher 的轮询间隔。",
@@ -442,7 +442,7 @@ pub fn status_service_manager_label(locale: Locale) -> &'static str {
     }
 }
 
-pub fn status_plist_path_label(locale: Locale) -> &'static str {
+pub fn status_config_path_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Config path",
         Locale::ZhHans => "配置路径",
@@ -628,42 +628,42 @@ pub fn watch_stopped_message(locale: Locale) -> &'static str {
 
 // ── Service labels ──
 
-pub fn install_launchd_done(locale: Locale) -> &'static str {
+pub fn service_installed_message(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Installed background service.",
         Locale::ZhHans => "已安装后台服务。",
     }
 }
 
-pub fn uninstall_launchd_done(locale: Locale) -> &'static str {
+pub fn service_uninstalled_message(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Removed background service.",
         Locale::ZhHans => "已移除后台服务。",
     }
 }
 
-pub fn launchd_label_message(locale: Locale, label: &str) -> String {
+pub fn service_label_message(locale: Locale, label: &str) -> String {
     match locale {
         Locale::En => format!("Service label: {label}"),
         Locale::ZhHans => format!("服务标签：{label}"),
     }
 }
 
-pub fn launchd_plist_message(locale: Locale, path: &Path) -> String {
+pub fn service_config_path_message(locale: Locale, path: &Path) -> String {
     match locale {
         Locale::En => format!("Config path: {}", path.display()),
         Locale::ZhHans => format!("配置路径：{}", path.display()),
     }
 }
 
-pub fn launchd_codex_home_message(locale: Locale, path: &Path) -> String {
+pub fn service_codex_home_message(locale: Locale, path: &Path) -> String {
     match locale {
         Locale::En => format!("Codex home: {}", path.display()),
         Locale::ZhHans => format!("Codex home：{}", path.display()),
     }
 }
 
-pub fn launchd_polling_message(locale: Locale, poll_interval: Duration) -> String {
+pub fn service_polling_message(locale: Locale, poll_interval: Duration) -> String {
     match locale {
         Locale::En => format!("Polling every {} ms.", poll_interval.as_millis()),
         Locale::ZhHans => format!("轮询间隔：{} ms。", poll_interval.as_millis()),
@@ -697,7 +697,7 @@ pub fn sqlite_missing_error(locale: Locale, path: &Path) -> String {
     }
 }
 
-pub fn no_launchd_plist_message(locale: Locale, path: &Path) -> String {
+pub fn no_service_config_message(locale: Locale, path: &Path) -> String {
     match locale {
         Locale::En => format!(
             "No background service config is installed at {}.",

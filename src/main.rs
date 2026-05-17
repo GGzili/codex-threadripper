@@ -90,7 +90,7 @@ enum Command {
         sqlite_only: bool,
     },
     /// placeholder
-    #[command(name = "print-service-config", alias = "print-plist")]
+    #[command(name = "print-service-config", alias = "print-config")]
     PrintServiceConfig {
         #[arg(
             long,
@@ -101,7 +101,7 @@ enum Command {
         poll_interval_ms: u64,
     },
     /// placeholder
-    #[command(name = "install-service", alias = "install-launchd")]
+    #[command(name = "install-service")]
     InstallService {
         #[arg(
             long,
@@ -112,7 +112,7 @@ enum Command {
         poll_interval_ms: u64,
     },
     /// placeholder
-    #[command(name = "uninstall-service", alias = "uninstall-launchd")]
+    #[command(name = "uninstall-service")]
     UninstallService,
     /// placeholder
     Restore {
@@ -432,33 +432,33 @@ fn localized_command(locale: Locale) -> clap::Command {
             })
     });
     command = command.mut_subcommand("print-service-config", |sub| {
-        sub.about(print_plist_about(locale))
+        sub.about(print_service_config_about(locale))
             .version(APP_VERSION)
             .disable_help_flag(true)
             .disable_version_flag(true)
             .disable_help_subcommand(true)
             .help_template(help_template(locale))
             .mut_arg("poll_interval_ms", |arg| {
-                arg.help(launchd_poll_help(locale))
+                arg.help(service_poll_help(locale))
                     .help_heading(options_heading(locale))
                     .value_name(milliseconds_value_name(locale))
             })
     });
     command = command.mut_subcommand("install-service", |sub| {
-        sub.about(install_launchd_about(locale))
+        sub.about(install_service_about(locale))
             .version(APP_VERSION)
             .disable_help_flag(true)
             .disable_version_flag(true)
             .disable_help_subcommand(true)
             .help_template(help_template(locale))
             .mut_arg("poll_interval_ms", |arg| {
-                arg.help(launchd_poll_help(locale))
+                arg.help(service_poll_help(locale))
                     .help_heading(options_heading(locale))
                     .value_name(milliseconds_value_name(locale))
             })
     });
     command = command.mut_subcommand("uninstall-service", |sub| {
-        sub.about(uninstall_launchd_about(locale))
+        sub.about(uninstall_service_about(locale))
             .version(APP_VERSION)
             .disable_help_flag(true)
             .disable_version_flag(true)
@@ -529,8 +529,8 @@ fn uninstall_service(locale: Locale, codex_home: &Path) -> Result<()> {
     let service_status = service::current_service_status()?;
     if service_status.installed {
         let config_path = service::uninstall_service()?;
-        println!("{}", uninstall_launchd_done(locale));
-        println!("{}", launchd_plist_message(locale, &config_path));
+        println!("{}", service_uninstalled_message(locale));
+        println!("{}", service_config_path_message(locale, &config_path));
         println!();
         println!("{}", next_steps_heading(locale));
         println!(
@@ -543,7 +543,7 @@ fn uninstall_service(locale: Locale, codex_home: &Path) -> Result<()> {
     } else {
         println!(
             "{}",
-            no_launchd_plist_message(locale, &service_status.config_path)
+            no_service_config_message(locale, &service_status.config_path)
         );
     }
     Ok(())
