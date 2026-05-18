@@ -59,13 +59,8 @@ pub fn current_manager() -> ServiceManager {
 pub fn current_service_status() -> Result<ServiceStatus> {
     let manager = current_manager();
     let codex_home = current_codex_home()?;
-    let config_path = service_config_path(manager)?;
-    let installed = match manager {
-        ServiceManager::WindowsStartup => {
-            config_path.exists() || legacy_windows_startup_cmd_path()?.exists()
-        }
-        _ => config_path.exists(),
-    };
+    let config_path = service_status_config_path(manager)?;
+    let installed = config_path.exists();
     let running = service_running(manager, &codex_home)?;
     Ok(ServiceStatus {
         manager,
@@ -302,15 +297,15 @@ fn install_windows_startup(
     })?;
     std::fs::create_dir_all(config_dir)?;
 
+    let script = build_windows_startup_vbs(exe_path, codex_home, provider_override, poll_interval);
+    std::fs::write(&config_path, script)
+        .with_context(|| format!("failed to write {}", config_path.display()))?;
+
     let legacy_cmd_path = legacy_windows_startup_cmd_path()?;
     if legacy_cmd_path.exists() {
         std::fs::remove_file(&legacy_cmd_path)
             .with_context(|| format!("failed to remove {}", legacy_cmd_path.display()))?;
     }
-
-    let script = build_windows_startup_vbs(exe_path, codex_home, provider_override, poll_interval);
-    std::fs::write(&config_path, script)
-        .with_context(|| format!("failed to write {}", config_path.display()))?;
 
     start_detached_watch(exe_path, codex_home, provider_override, poll_interval)?;
 
@@ -361,6 +356,29 @@ fn service_config_path(manager: ServiceManager) -> Result<PathBuf> {
             Ok(windows_startup_dir()?.join(format!("{SERVICE_LABEL}.vbs")))
         }
     }
+}
+
+fn service_status_config_path(manager: ServiceManager) -> Result<PathBuf> {
+    let config_path = service_config_path(manager)?;
+    if manager != ServiceManager::WindowsStartup {
+        return Ok(config_path);
+    }
+
+    let legacy_cmd_path = legacy_windows_startup_cmd_path()?;
+    Ok(installed_windows_startup_config_path(
+        &config_path,
+        &legacy_cmd_path,
+    ))
+}
+
+fn installed_windows_startup_config_path(config_path: &Path, legacy_cmd_path: &Path) -> PathBuf {
+    if config_path.exists() {
+        return config_path.to_path_buf();
+    }
+    if legacy_cmd_path.exists() {
+        return legacy_cmd_path.to_path_buf();
+    }
+    config_path.to_path_buf()
 }
 
 fn legacy_windows_startup_cmd_path() -> Result<PathBuf> {
@@ -425,7 +443,7 @@ fn build_windows_startup_vbs(
         codex_home,
         provider_override,
         poll_interval,
-        ShellFlavor::Cmd,
+        ShellFlavor::WindowsProcess,
     );
 
     format!(
@@ -503,7 +521,7 @@ fn watch_command_line(
 ) -> String {
     let quote = |value: String| match flavor {
         ShellFlavor::Sh => shell_quote(value),
-        ShellFlavor::Cmd => windows_quote(&value),
+        ShellFlavor::WindowsProcess => windows_process_quote(&value),
     };
 
     let mut parts = vec![
@@ -524,7 +542,7 @@ fn watch_command_line(
 #[derive(Clone, Copy)]
 enum ShellFlavor {
     Sh,
-    Cmd,
+    WindowsProcess,
 }
 
 fn start_detached_watch(
@@ -990,17 +1008,37 @@ fn shell_quote(input: String) -> String {
     format!("'{}'", input.replace('\'', r"'\''"))
 }
 
-fn windows_quote(input: &str) -> String {
-    let escaped: String = input
-        .chars()
-        .flat_map(|c| match c {
-            '"' => "\"\"".chars().collect::<Vec<_>>(),
-            '%' => "%%".chars().collect::<Vec<_>>(),
-            '^' | '&' | '|' | '<' | '>' => vec!['^', c],
-            _ => vec![c],
-        })
-        .collect();
-    format!("\"{escaped}\"")
+fn windows_process_quote(input: &str) -> String {
+    if !input.is_empty() && input.chars().all(|ch| !ch.is_whitespace() && ch != '"') {
+        return input.to_string();
+    }
+
+    let mut quoted = String::from("\"");
+    let mut pending_backslashes = 0;
+    for ch in input.chars() {
+        match ch {
+            '\\' => pending_backslashes += 1,
+            '"' => {
+                for _ in 0..(pending_backslashes * 2 + 1) {
+                    quoted.push('\\');
+                }
+                quoted.push('"');
+                pending_backslashes = 0;
+            }
+            _ => {
+                for _ in 0..pending_backslashes {
+                    quoted.push('\\');
+                }
+                quoted.push(ch);
+                pending_backslashes = 0;
+            }
+        }
+    }
+    for _ in 0..(pending_backslashes * 2) {
+        quoted.push('\\');
+    }
+    quoted.push('"');
+    quoted
 }
 
 fn vbs_quote(input: &str) -> String {
@@ -1047,37 +1085,81 @@ enum ProcessStatus {
 #[cfg(test)]
 mod tests {
     use super::build_windows_startup_vbs;
-    use super::windows_quote;
+    use super::installed_windows_startup_config_path;
+    use anyhow::Result;
+    use std::fs;
     use std::path::Path;
     use std::time::Duration;
 
     #[test]
-    fn windows_quote_escapes_shell_metacharacters() {
+    fn windows_status_config_path_uses_legacy_cmd_when_vbs_is_missing() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let vbs_path = dir.path().join("dev.wangnov.codex-threadripper.vbs");
+        let cmd_path = dir.path().join("dev.wangnov.codex-threadripper.cmd");
+        fs::write(&cmd_path, "@echo off\r\n")?;
+
         assert_eq!(
-            windows_quote(r"C:\Program Files\x.exe"),
-            r#""C:\Program Files\x.exe""#
+            installed_windows_startup_config_path(&vbs_path, &cmd_path),
+            cmd_path
         );
-        assert_eq!(
-            windows_quote(r"C:\tmp\100% done\x.exe"),
-            r#""C:\tmp\100%% done\x.exe""#
-        );
-        assert_eq!(windows_quote(r"C:\tmp\a&b\x.exe"), r#""C:\tmp\a^&b\x.exe""#);
+
+        Ok(())
     }
 
     #[test]
-    fn windows_startup_vbs_hides_console_window() {
+    fn windows_startup_vbs_quotes_space_paths_without_cmd_wrapper() {
         let script = build_windows_startup_vbs(
-            Path::new(r"C:\Program Files\codex-threadripper\codex-threadripper.exe"),
-            Path::new(r"C:\Users\admin\.codex"),
-            Some("my"),
+            Path::new(r"C:\Program Files\codex threadripper\codex-threadripper.exe"),
+            Path::new(r"C:\Users\Admin User\.codex"),
+            None,
             Duration::from_millis(1500),
         );
+        let command = shell_run_command(&script);
 
         assert!(script.contains(r#"CreateObject("WScript.Shell")"#));
         assert!(script.contains("shell.Run"));
         assert!(script.contains(", 0, False"));
         assert!(!script.contains("cmd.exe /c"));
-        assert!(script.contains(r#""C:\Program Files\codex-threadripper\codex-threadripper.exe""#));
-        assert!(script.contains("watch --poll-interval-ms 1500"));
+        assert_eq!(
+            command,
+            concat!(
+                r#""C:\Program Files\codex threadripper\codex-threadripper.exe" "#,
+                r#"--codex-home "C:\Users\Admin User\.codex" "#,
+                "watch --poll-interval-ms 1500"
+            )
+        );
+    }
+
+    #[test]
+    fn windows_startup_vbs_escapes_provider_quotes_and_spaces() {
+        let script = build_windows_startup_vbs(
+            Path::new(r"C:\Tools\codex-threadripper.exe"),
+            Path::new(r"C:\Codex"),
+            Some(r#"open ai "beta""#),
+            Duration::from_millis(500),
+        );
+        let command = shell_run_command(&script);
+
+        assert!(!script.contains("cmd.exe /c"));
+        assert_eq!(
+            command,
+            concat!(
+                r"C:\Tools\codex-threadripper.exe --codex-home C:\Codex ",
+                r#"--provider "open ai \"beta\"" watch --poll-interval-ms 500"#
+            )
+        );
+    }
+
+    fn shell_run_command(script: &str) -> String {
+        let line = script
+            .lines()
+            .find(|line| line.starts_with("shell.Run "))
+            .expect("script should contain shell.Run");
+        let literal = line
+            .strip_prefix("shell.Run ")
+            .and_then(|value| value.strip_suffix(", 0, False"))
+            .expect("shell.Run should pass a quoted command literal");
+        assert!(literal.starts_with('"') && literal.ends_with('"'));
+        literal[1..literal.len() - 1].replace("\"\"", "\"")
     }
 }
