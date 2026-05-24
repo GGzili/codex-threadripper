@@ -4,6 +4,7 @@ import argparse
 import os
 import pathlib
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -19,7 +20,10 @@ CREATE TABLE threads (
     rollout_path TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
+    created_at_ms INTEGER,
+    updated_at_ms INTEGER,
     source TEXT NOT NULL,
+    thread_source TEXT,
     model_provider TEXT NOT NULL,
     cwd TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -39,8 +43,54 @@ CREATE TABLE threads (
     memory_mode TEXT NOT NULL DEFAULT 'enabled',
     model TEXT,
     reasoning_effort TEXT,
-    agent_path TEXT
+    agent_path TEXT,
+    preview TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX idx_threads_created_at ON threads(created_at DESC, id DESC);
+CREATE INDEX idx_threads_updated_at ON threads(updated_at DESC, id DESC);
+CREATE INDEX idx_threads_archived ON threads(archived);
+CREATE INDEX idx_threads_source ON threads(source);
+CREATE INDEX idx_threads_provider ON threads(model_provider);
+CREATE INDEX idx_threads_created_at_ms ON threads(created_at_ms DESC, id DESC);
+CREATE INDEX idx_threads_updated_at_ms ON threads(updated_at_ms DESC, id DESC);
+CREATE INDEX idx_threads_archived_cwd_created_at_ms
+    ON threads(archived, cwd, created_at_ms DESC, id DESC);
+CREATE INDEX idx_threads_archived_cwd_updated_at_ms
+    ON threads(archived, cwd, updated_at_ms DESC, id DESC);
+CREATE TRIGGER threads_created_at_ms_after_insert
+AFTER INSERT ON threads
+WHEN NEW.created_at_ms IS NULL
+BEGIN
+    UPDATE threads
+    SET created_at_ms = NEW.created_at * 1000
+    WHERE id = NEW.id;
+END;
+CREATE TRIGGER threads_updated_at_ms_after_insert
+AFTER INSERT ON threads
+WHEN NEW.updated_at_ms IS NULL
+BEGIN
+    UPDATE threads
+    SET updated_at_ms = NEW.updated_at * 1000
+    WHERE id = NEW.id;
+END;
+CREATE TRIGGER threads_created_at_ms_after_update
+AFTER UPDATE OF created_at ON threads
+WHEN NEW.created_at != OLD.created_at
+ AND NEW.created_at_ms IS OLD.created_at_ms
+BEGIN
+    UPDATE threads
+    SET created_at_ms = NEW.created_at * 1000
+    WHERE id = NEW.id;
+END;
+CREATE TRIGGER threads_updated_at_ms_after_update
+AFTER UPDATE OF updated_at ON threads
+WHEN NEW.updated_at != OLD.updated_at
+ AND NEW.updated_at_ms IS OLD.updated_at_ms
+BEGIN
+    UPDATE threads
+    SET updated_at_ms = NEW.updated_at * 1000
+    WHERE id = NEW.id;
+END;
 """
 
 COMMAND_TIMEOUT_SECONDS = 30
@@ -76,6 +126,9 @@ def main() -> int:
         print(f"[smoke] sync passed with backup: {backup_path}")
         assert_backup_contains_dirty_rows(backup_path)
         print("[smoke] backup verification passed")
+        assert_rollout_provider(codex_home, "rollout-a.jsonl", "1", "openai")
+        assert_rollout_provider(codex_home, "rollout-b.jsonl", "2", "openai")
+        print("[smoke] rollout metadata verification passed")
         assert_status(binary_path, codex_home, expected_total=3, expected_mismatched=0)
         print("[smoke] post-sync status passed")
         run_service_install(binary_path, codex_home)
@@ -85,10 +138,11 @@ def main() -> int:
                 binary_path, codex_home, expected_installed="yes", expected_running="yes"
             )
             print("[smoke] service reached installed=yes running=yes")
-            insert_dirty_row(codex_home / "state_5.sqlite")
-            write_new_session(codex_home)
+            rollout_path = write_new_session(codex_home)
+            insert_dirty_row(codex_home / "state_5.sqlite", rollout_path)
             print("[smoke] inserted dirty row and wrote new session")
             wait_for_reconcile(binary_path, codex_home)
+            assert_rollout_provider(codex_home, "rollout-d.jsonl", "4", "openai")
             print("[smoke] background reconcile passed")
         finally:
             run_service_uninstall(binary_path, codex_home)
@@ -126,14 +180,12 @@ def prepare_codex_home(codex_home: pathlib.Path) -> None:
 
     sessions_dir = codex_home / "sessions" / "2026" / "04" / "15"
     sessions_dir.mkdir(parents=True, exist_ok=True)
-    (sessions_dir / "rollout-a.jsonl").write_text(
-        '{"type":"session_meta","payload":{"model_provider":"vm"}}\n',
-        encoding="utf-8",
-    )
-    (sessions_dir / "rollout-b.jsonl").write_text(
-        '{"type":"session_meta","payload":{"model_provider":"cp"}}\n',
-        encoding="utf-8",
-    )
+    rollout_a = sessions_dir / "rollout-a.jsonl"
+    rollout_b = sessions_dir / "rollout-b.jsonl"
+    rollout_c = sessions_dir / "rollout-c.jsonl"
+    write_rollout(rollout_a, "1", "vm")
+    write_rollout(rollout_b, "2", "cp")
+    write_rollout(rollout_c, "3", "openai")
 
     sqlite_path = codex_home / "state_5.sqlite"
     connection = sqlite3.connect(sqlite_path)
@@ -141,18 +193,83 @@ def prepare_codex_home(codex_home: pathlib.Path) -> None:
     connection.executemany(
         """
         INSERT INTO threads (
-            id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
-            sandbox_policy, approval_mode
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, rollout_path, created_at, updated_at, created_at_ms, updated_at_ms,
+            source, thread_source, model_provider, cwd, title, sandbox_policy, approval_mode,
+            cli_version, model, reasoning_effort, first_user_message, preview
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
-            ("1", "/tmp/a", 1, 1, "cli", "vm", "/tmp", "a", "workspace-write", "auto"),
-            ("2", "/tmp/b", 1, 1, "cli", "cp", "/tmp", "b", "workspace-write", "auto"),
-            ("3", "/tmp/c", 1, 1, "cli", "openai", "/tmp", "c", "workspace-write", "auto"),
+            (
+                "1",
+                str(rollout_a),
+                1,
+                1,
+                1000,
+                1000,
+                "cli",
+                "user",
+                "vm",
+                "/tmp",
+                "a",
+                "workspace-write",
+                "auto",
+                "0.0.0-test",
+                "gpt-5-codex",
+                "medium",
+                "a",
+                "a",
+            ),
+            (
+                "2",
+                str(rollout_b),
+                1,
+                1,
+                1001,
+                1001,
+                "cli",
+                "user",
+                "cp",
+                "/tmp",
+                "b",
+                "workspace-write",
+                "auto",
+                "0.0.0-test",
+                "gpt-5-codex",
+                "medium",
+                "b",
+                "b",
+            ),
+            (
+                "3",
+                str(rollout_c),
+                1,
+                1,
+                1002,
+                1002,
+                "cli",
+                "user",
+                "openai",
+                "/tmp",
+                "c",
+                "workspace-write",
+                "auto",
+                "0.0.0-test",
+                "gpt-5-codex",
+                "medium",
+                "c",
+                "c",
+            ),
         ],
     )
     connection.commit()
     connection.close()
+
+
+def write_rollout(path: pathlib.Path, thread_id: str, provider: str) -> None:
+    path.write_text(
+        f'{{"type":"session_meta","payload":{{"id":"{thread_id}","model_provider":"{provider}"}}}}\n',
+        encoding="utf-8",
+    )
 
 
 def command_env() -> dict[str, str]:
@@ -213,6 +330,8 @@ def run_sync(binary_path: pathlib.Path, codex_home: pathlib.Path) -> pathlib.Pat
     output = run_command(binary_path, codex_home, "sync")
     if "Rows updated: 2" not in output:
         raise RuntimeError(f"unexpected sync output\n\n{output}")
+    if "Rollouts updated: 2" not in output:
+        raise RuntimeError(f"sync did not rewrite rollout metadata\n\n{output}")
 
     backup_line = next(
         (line for line in output.splitlines() if line.startswith("Backup: ")),
@@ -223,7 +342,32 @@ def run_sync(binary_path: pathlib.Path, codex_home: pathlib.Path) -> pathlib.Pat
     backup_path = pathlib.Path(backup_line.removeprefix("Backup: ").strip())
     if not backup_path.exists():
         raise RuntimeError(f"backup file is missing: {backup_path}")
+    journal_line = next(
+        (line for line in output.splitlines() if line.startswith("Rollout first-line journal: ")),
+        None,
+    )
+    if journal_line is None:
+        raise RuntimeError(f"missing rollout journal line in sync output\n\n{output}")
+    journal_path = pathlib.Path(journal_line.removeprefix("Rollout first-line journal: ").strip())
+    if not journal_path.exists():
+        raise RuntimeError(f"rollout journal file is missing: {journal_path}")
+    journal = journal_path.read_text(encoding="utf-8")
+    if '"thread_id":"1"' not in journal or '"thread_id":"2"' not in journal:
+        raise RuntimeError(f"rollout journal did not include rewritten threads\n\n{journal}")
     return backup_path
+
+
+def assert_rollout_provider(
+    codex_home: pathlib.Path, rollout_name: str, thread_id: str, provider: str
+) -> None:
+    rollout_path = codex_home / "sessions" / "2026" / "04" / "15" / rollout_name
+    first_line = rollout_path.read_text(encoding="utf-8").splitlines()[0]
+    expected_id = f'"id":"{thread_id}"'
+    expected_provider = f'"model_provider":"{provider}"'
+    if expected_id not in first_line or expected_provider not in first_line:
+        raise RuntimeError(
+            f"unexpected rollout first line for {rollout_path}\n\n{first_line}"
+        )
 
 
 def assert_backup_contains_dirty_rows(backup_path: pathlib.Path) -> None:
@@ -269,28 +413,47 @@ def wait_for_service_status(
     )
 
 
-def insert_dirty_row(sqlite_path: pathlib.Path) -> None:
+def insert_dirty_row(sqlite_path: pathlib.Path, rollout_path: pathlib.Path) -> None:
     connection = sqlite3.connect(sqlite_path)
     connection.execute(
         """
         INSERT INTO threads (
-            id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
-            sandbox_policy, approval_mode
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, rollout_path, created_at, updated_at, created_at_ms, updated_at_ms,
+            source, thread_source, model_provider, cwd, title, sandbox_policy, approval_mode,
+            cli_version, model, reasoning_effort, first_user_message, preview
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        ("4", "/tmp/d", 1, 1, "cli", "vm", "/tmp", "d", "workspace-write", "auto"),
+            (
+                "4",
+                str(rollout_path),
+            1,
+            1,
+            1003,
+            1003,
+            "cli",
+            "user",
+            "vm",
+            "/tmp",
+            "d",
+            "workspace-write",
+            "auto",
+            "0.0.0-test",
+            "gpt-5-codex",
+            "medium",
+            "d",
+            "d",
+        ),
     )
     connection.commit()
     connection.close()
 
 
-def write_new_session(codex_home: pathlib.Path) -> None:
+def write_new_session(codex_home: pathlib.Path) -> pathlib.Path:
     sessions_dir = codex_home / "sessions" / "2026" / "04" / "15"
     sessions_dir.mkdir(parents=True, exist_ok=True)
-    (sessions_dir / "rollout-c.jsonl").write_text(
-        '{"type":"session_meta","payload":{"model_provider":"vm"}}\n',
-        encoding="utf-8",
-    )
+    rollout_path = sessions_dir / "rollout-d.jsonl"
+    write_rollout(rollout_path, "4", "vm")
+    return rollout_path
 
 
 def wait_for_reconcile(binary_path: pathlib.Path, codex_home: pathlib.Path) -> None:
