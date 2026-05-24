@@ -283,29 +283,47 @@ def command_env() -> dict[str, str]:
 def run_command(binary_path: pathlib.Path, codex_home: pathlib.Path, *args: str) -> str:
     command = [str(binary_path), "--codex-home", str(codex_home), *args]
     print(f"[smoke] running: {' '.join(command)}")
+    stdout_fd, stdout_name = tempfile.mkstemp(prefix="codex-threadripper-stdout-")
+    stderr_fd, stderr_name = tempfile.mkstemp(prefix="codex-threadripper-stderr-")
+    os.close(stdout_fd)
+    os.close(stderr_fd)
+    stdout_path = pathlib.Path(stdout_name)
+    stderr_path = pathlib.Path(stderr_name)
     try:
-        completed = subprocess.run(
-            command,
-            check=True,
-            capture_output=True,
-            text=True,
-            env=command_env(),
-            timeout=COMMAND_TIMEOUT_SECONDS,
-        )
+        with stdout_path.open("w", encoding="utf-8") as stdout_file, stderr_path.open(
+            "w", encoding="utf-8"
+        ) as stderr_file:
+            subprocess.run(
+                command,
+                check=True,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                text=True,
+                env=command_env(),
+                timeout=COMMAND_TIMEOUT_SECONDS,
+                stdin=subprocess.DEVNULL,
+            )
     except subprocess.TimeoutExpired as err:
-        stdout = (err.stdout or "").strip()
-        stderr = (err.stderr or "").strip()
+        stdout = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
+        stderr = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
         raise RuntimeError(
             "command timed out after "
             f"{COMMAND_TIMEOUT_SECONDS}s: {' '.join(command)}\n\nstdout:\n{stdout}\n\nstderr:\n{stderr}"
         ) from err
     except subprocess.CalledProcessError as err:
-        stdout = (err.stdout or "").strip()
-        stderr = (err.stderr or "").strip()
+        stdout = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
+        stderr = stderr_path.read_text(encoding="utf-8", errors="replace").strip()
         raise RuntimeError(
             f"command failed: {' '.join(command)}\n\nstdout:\n{stdout}\n\nstderr:\n{stderr}"
         ) from err
-    return completed.stdout
+    else:
+        return stdout_path.read_text(encoding="utf-8", errors="replace")
+    finally:
+        for path in (stdout_path, stderr_path):
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
 
 def assert_status(
