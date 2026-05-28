@@ -10,12 +10,23 @@ use crate::codex_config::resolve_sqlite_path;
 use crate::rollout::RolloutProgressConfig;
 use crate::rollout::RolloutScope;
 use crate::rollout::reconcile_rollout_metadata_from_sqlite_with_progress;
+use crate::rollout::scan_rollout_metadata_dry_run;
 use crate::service;
 use crate::service::ServiceStatus as BackgroundServiceStatus;
 use crate::state_db::ProviderDistribution;
 use crate::state_db::create_sqlite_backup_file;
 use crate::state_db::inspect_sqlite_distribution;
 use crate::state_db::reconcile_sqlite_in_place;
+
+#[derive(Debug)]
+pub(crate) struct DryRunSummary {
+    pub(crate) provider: String,
+    pub(crate) total_rows: u64,
+    pub(crate) mismatched_rows: u64,
+    pub(crate) rollout_would_update: u64,
+    pub(crate) rollout_would_prepare: u64,
+    pub(crate) rollout_would_skip: u64,
+}
 
 #[derive(Debug)]
 pub(crate) struct ReconcileSummary {
@@ -120,6 +131,35 @@ fn reconcile_once_with_progress(
         elapsed: started.elapsed(),
         backup_path: None,
         rollout_journal_path: rollout_summary.journal_path,
+    })
+}
+
+pub(crate) fn dry_run_sync(
+    codex_home: &Path,
+    provider_override: Option<&str>,
+    profile_override: Option<&str>,
+    rollout_scope: RolloutScope,
+) -> Result<DryRunSummary> {
+    let provider = match provider_override {
+        Some(provider) => provider.to_string(),
+        None => read_provider_from_config(codex_home, profile_override)?,
+    };
+    let sqlite_path = resolve_sqlite_path(codex_home, profile_override)?;
+    let (total_rows, mismatched_rows, _) =
+        inspect_sqlite_distribution(&sqlite_path, provider.as_str())?;
+    let rollout_preview = scan_rollout_metadata_dry_run(
+        &sqlite_path,
+        provider.as_str(),
+        rollout_scope,
+        DEFAULT_BUCKET_PADDING_BYTES,
+    )?;
+    Ok(DryRunSummary {
+        provider,
+        total_rows,
+        mismatched_rows,
+        rollout_would_update: rollout_preview.would_update,
+        rollout_would_prepare: rollout_preview.would_prepare,
+        rollout_would_skip: rollout_preview.would_skip,
     })
 }
 

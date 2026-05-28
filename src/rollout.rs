@@ -62,6 +62,51 @@ pub(crate) struct BucketPrepareSummary {
     pub(crate) journal_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct RolloutDryRunSummary {
+    pub(crate) would_update: u64,
+    pub(crate) would_prepare: u64,
+    pub(crate) would_skip: u64,
+}
+
+pub(crate) fn scan_rollout_metadata_dry_run(
+    sqlite_path: &Path,
+    provider: &str,
+    scope: RolloutScope,
+    padding_bytes: usize,
+) -> Result<RolloutDryRunSummary> {
+    if scope == RolloutScope::None {
+        return Ok(RolloutDryRunSummary::default());
+    }
+    let targets = rollout_targets_for_scope(sqlite_path, provider, scope)?;
+    let mut summary = RolloutDryRunSummary::default();
+    for target in &targets {
+        if !target.path.exists() {
+            continue;
+        }
+        let first_line = read_first_line(&target.path)?;
+        let Some(mut value) =
+            parse_matching_session_meta(first_line.content.as_slice(), target.thread_id.as_str())?
+        else {
+            summary.would_skip += 1;
+            continue;
+        };
+        if !set_session_meta_provider(&mut value, provider) {
+            continue;
+        }
+        let rendered = serde_json::to_vec(&value)
+            .with_context(|| format!("failed to render {}", target.path.display()))?;
+        if rendered.len() <= first_line.content.len() {
+            summary.would_update += 1;
+        } else {
+            summary.would_update += 1;
+            summary.would_prepare += 1;
+            let _ = padding_bytes;
+        }
+    }
+    Ok(summary)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RolloutProgressConfig {
     pub(crate) locale: Locale,

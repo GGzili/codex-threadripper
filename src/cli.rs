@@ -48,6 +48,8 @@ pub(crate) enum Command {
     Sync {
         #[arg(long, help = "placeholder")]
         sqlite_only: bool,
+        #[arg(long, help = "placeholder")]
+        dry_run: bool,
     },
     /// placeholder
     Bucket {
@@ -92,6 +94,23 @@ pub(crate) enum Command {
     /// placeholder
     #[command(name = "uninstall-service", alias = "uninstall-launchd")]
     UninstallService,
+    /// placeholder
+    Restore {
+        #[arg(value_name = "BACKUP_PATH", help = "placeholder")]
+        backup_path: Option<PathBuf>,
+        #[arg(long, help = "placeholder")]
+        latest: bool,
+        #[arg(long, help = "placeholder")]
+        force: bool,
+    },
+    /// placeholder
+    #[command(name = "prune-backups")]
+    PruneBackups {
+        #[arg(long, default_value_t = 5, value_name = "N", help = "placeholder")]
+        keep: usize,
+        #[arg(long, help = "placeholder")]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -184,6 +203,10 @@ pub(crate) fn localized_command(locale: Locale) -> clap::Command {
                 arg.help(sqlite_only_help(locale))
                     .help_heading(options_heading(locale))
             })
+            .mut_arg("dry_run", |arg| {
+                arg.help(dry_run_help(locale))
+                    .help_heading(options_heading(locale))
+            })
     });
     command = command.mut_subcommand("bucket", |sub| {
         sub.about(bucket_about(locale))
@@ -273,6 +296,42 @@ pub(crate) fn localized_command(locale: Locale) -> clap::Command {
             .disable_version_flag(true)
             .disable_help_subcommand(true)
             .help_template(help_template(locale))
+    });
+    command = command.mut_subcommand("restore", |sub| {
+        sub.about(restore_about(locale))
+            .version(APP_VERSION)
+            .disable_help_flag(true)
+            .disable_version_flag(true)
+            .disable_help_subcommand(true)
+            .help_template(help_template(locale))
+            .mut_arg("backup_path", |arg| {
+                arg.help(restore_path_help(locale))
+                    .value_name(restore_path_value_name(locale))
+            })
+            .mut_arg("latest", |arg| {
+                arg.help(restore_latest_help(locale))
+                    .help_heading(options_heading(locale))
+            })
+            .mut_arg("force", |arg| {
+                arg.help(restore_force_help(locale))
+                    .help_heading(options_heading(locale))
+            })
+    });
+    command = command.mut_subcommand("prune-backups", |sub| {
+        sub.about(prune_backups_about(locale))
+            .version(APP_VERSION)
+            .disable_help_flag(true)
+            .disable_version_flag(true)
+            .disable_help_subcommand(true)
+            .help_template(help_template(locale))
+            .mut_arg("keep", |arg| {
+                arg.help(prune_keep_help(locale))
+                    .help_heading(options_heading(locale))
+            })
+            .mut_arg("force", |arg| {
+                arg.help(prune_force_help(locale))
+                    .help_heading(options_heading(locale))
+            })
     });
 
     command

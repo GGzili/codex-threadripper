@@ -886,3 +886,226 @@ pub(crate) fn service_log_message(locale: Locale, path: &Path) -> String {
         Locale::ZhHans => format!("日志路径：{}", path.display()),
     }
 }
+
+pub(crate) fn dry_run_help(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Preview what would change without writing anything.",
+        Locale::ZhHans => "预览将要变更的内容，不实际写入。",
+    }
+}
+
+pub(crate) fn restore_about(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Restore the SQLite state DB from a backup file.",
+        Locale::ZhHans => "从备份文件恢复 SQLite 状态库。",
+    }
+}
+
+pub(crate) fn restore_path_help(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Path to the .bak backup file to restore from.",
+        Locale::ZhHans => "要恢复的 .bak 备份文件路径。",
+    }
+}
+
+pub(crate) fn restore_path_value_name(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "BACKUP_PATH",
+        Locale::ZhHans => "备份路径",
+    }
+}
+
+pub(crate) fn restore_latest_help(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Restore the most recent backup (by filename timestamp).",
+        Locale::ZhHans => "恢复最近一次备份（按文件名时间戳）。",
+    }
+}
+
+pub(crate) fn restore_force_help(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Skip confirmation prompt.",
+        Locale::ZhHans => "跳过确认提示。",
+    }
+}
+
+pub(crate) fn prune_backups_about(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Remove old backups, keeping the N most recent.",
+        Locale::ZhHans => "删除旧备份，保留最近的 N 个。",
+    }
+}
+
+pub(crate) fn prune_keep_help(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Number of most recent backups to keep.",
+        Locale::ZhHans => "保留最近备份的数量。",
+    }
+}
+
+pub(crate) fn prune_force_help(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Skip confirmation prompt before deleting.",
+        Locale::ZhHans => "删除前跳过确认提示。",
+    }
+}
+
+pub(crate) fn restore_list_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Available backups (newest first):",
+        Locale::ZhHans => "可用备份（最新在前）：",
+    }
+}
+
+pub(crate) fn restore_no_backups(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "No backups found in the backups directory.",
+        Locale::ZhHans => "备份目录中没有找到备份文件。",
+    }
+}
+
+pub(crate) fn restore_confirm_prompt(locale: Locale, path: &Path) -> String {
+    match locale {
+        Locale::En => format!(
+            "This will overwrite the current SQLite state DB with:\n  {}\nContinue? [y/N] ",
+            path.display()
+        ),
+        Locale::ZhHans => format!(
+            "这将用以下备份覆盖当前 SQLite 状态库：\n  {}\n继续？[y/N] ",
+            path.display()
+        ),
+    }
+}
+
+pub(crate) fn restore_cancelled(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Restore cancelled.",
+        Locale::ZhHans => "恢复已取消。",
+    }
+}
+
+pub(crate) fn restore_complete(locale: Locale, path: &Path) -> String {
+    match locale {
+        Locale::En => format!("Restored from: {}", path.display()),
+        Locale::ZhHans => format!("已从备份恢复：{}", path.display()),
+    }
+}
+
+pub(crate) fn prune_confirm_prompt(locale: Locale, count: usize) -> String {
+    match locale {
+        Locale::En => format!("Will delete {count} backup(s). Continue? [y/N] "),
+        Locale::ZhHans => format!("将删除 {count} 个备份。继续？[y/N] "),
+    }
+}
+
+pub(crate) fn prune_cancelled(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Prune cancelled.",
+        Locale::ZhHans => "清理已取消。",
+    }
+}
+
+pub(crate) fn prune_complete(locale: Locale, deleted: usize, kept: usize) -> String {
+    match locale {
+        Locale::En => format!("Deleted {deleted} backup(s), kept {kept}."),
+        Locale::ZhHans => format!("已删除 {deleted} 个备份，保留 {kept} 个。"),
+    }
+}
+
+pub(crate) fn prune_skipped_warning(locale: Locale, name: &str) -> String {
+    match locale {
+        Locale::En => format!("  skipped (unparseable timestamp): {name}"),
+        Locale::ZhHans => format!("  已跳过（无法解析时间戳）：{name}"),
+    }
+}
+
+pub(crate) fn dry_run_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Dry-run preview",
+        Locale::ZhHans => "Dry-run 预览",
+    }
+}
+
+pub(crate) fn dry_run_sqlite_rows_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Rows that would be updated",
+        Locale::ZhHans => "将被更新的行数",
+    }
+}
+
+pub(crate) fn dry_run_rollouts_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Rollouts that would be updated",
+        Locale::ZhHans => "将被更新的 rollout 数",
+    }
+}
+
+pub(crate) fn dry_run_rollouts_prepare_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Rollouts that would be rewritten (padding)",
+        Locale::ZhHans => "将被重写的 rollout 数（padding）",
+    }
+}
+
+pub(crate) fn dry_run_rollouts_skip_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Rollouts that would be skipped",
+        Locale::ZhHans => "将被跳过的 rollout 数",
+    }
+}
+
+pub(crate) fn dry_run_no_changes(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "No changes needed — everything is already aligned.",
+        Locale::ZhHans => "无需变更——一切已对齐。",
+    }
+}
+
+pub(crate) fn print_dry_run_summary(locale: Locale, summary: &crate::sync::DryRunSummary) {
+    println!("{}", dry_run_title(locale));
+    println!(
+        "{}: {}",
+        status_target_provider_label(locale),
+        summary.provider
+    );
+    println!(
+        "{}: {}",
+        dry_run_sqlite_rows_label(locale),
+        summary.mismatched_rows
+    );
+    println!(
+        "{}: {}",
+        status_total_threads_label(locale),
+        summary.total_rows
+    );
+    if summary.rollout_would_update > 0
+        || summary.rollout_would_prepare > 0
+        || summary.rollout_would_skip > 0
+    {
+        println!(
+            "{}: {}",
+            dry_run_rollouts_label(locale),
+            summary.rollout_would_update
+        );
+        if summary.rollout_would_prepare > 0 {
+            println!(
+                "{}: {}",
+                dry_run_rollouts_prepare_label(locale),
+                summary.rollout_would_prepare
+            );
+        }
+        if summary.rollout_would_skip > 0 {
+            println!(
+                "{}: {}",
+                dry_run_rollouts_skip_label(locale),
+                summary.rollout_would_skip
+            );
+        }
+    }
+    if summary.mismatched_rows == 0
+        && summary.rollout_would_update == 0
+        && summary.rollout_would_prepare == 0
+    {
+        println!("{}", dry_run_no_changes(locale));
+    }
+}

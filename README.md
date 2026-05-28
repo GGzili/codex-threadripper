@@ -103,6 +103,16 @@ codex-threadripper install-service
 
 - `status`：查看当前 provider、SQLite 里各 provider 的线程分布，以及后台服务的运行状态
 - `sync`：立即执行一次收敛。执行前会在 SQLite 状态库旁边的 `backups/` 目录里写一份带时间戳的备份；如果 rollout 首行需要改写，也会写 compact journal
+- `sync --dry-run`：预览将要变更的内容（SQLite 行数和 rollout 文件数），不实际写入任何数据
+- `restore`：从备份恢复 SQLite 状态库
+  - 不带参数：列出所有可用备份并退出
+  - `restore <BACKUP_PATH>`：从指定备份文件恢复
+  - `restore --latest`：恢复最近一次备份（按文件名时间戳）
+  - `--force`：跳过确认提示
+- `prune-backups`：删除旧备份，保留最近的 N 个（默认 5）
+  - `--keep N`：指定保留数量
+  - `--force`：跳过确认提示
+  - 无法解析时间戳的 `.bak` 文件会被跳过并发出警告
 - `bucket switch <provider>`：把全部历史切到指定 provider 可见桶；首行有 padding 时只做原地 patch
 - `bucket prepare`：给 rollout 首行补足 JSON 空白 padding，让后续 provider 桶切换保持快速
 - `watch`：持续监听 `config.toml` 的变化，同时定时收敛新增的线程记录
@@ -220,6 +230,16 @@ codex-threadripper install-service
 
 - `status`: show the active provider, the per-provider thread counts from SQLite, and whether the background service is running
 - `sync`: reconcile once right now, writing a timestamped backup to the `backups/` directory beside the SQLite state DB; rollout first-line changes also get a compact journal
+- `sync --dry-run`: preview what would change (SQLite rows and rollout files) without writing anything
+- `restore`: restore the SQLite state DB from a backup file
+  - No argument: list all available backups and exit
+  - `restore <BACKUP_PATH>`: restore from the specified backup file
+  - `restore --latest`: restore the most recent backup (by filename timestamp)
+  - `--force`: skip the confirmation prompt
+- `prune-backups`: remove old backups, keeping the N most recent (default 5)
+  - `--keep N`: number of backups to keep
+  - `--force`: skip the confirmation prompt
+  - `.bak` files with unparseable timestamps are skipped with a warning
 - `bucket switch <provider>`: move all history into the requested provider visibility bucket; prepared first lines are patched in place
 - `bucket prepare`: reserve JSON whitespace padding in rollout first lines so future provider bucket switches stay fast
 - `watch`: keep watching `config.toml` for provider changes and periodically reconcile any newly added thread rows

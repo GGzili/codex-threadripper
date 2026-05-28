@@ -151,6 +151,86 @@ pub(crate) fn ensure_sqlite_exists(sqlite_path: &Path) -> Result<()> {
     anyhow::bail!(sqlite_missing_error(detect_locale(), sqlite_path));
 }
 
+#[derive(Debug)]
+pub(crate) struct BackupEntry {
+    pub(crate) path: PathBuf,
+    pub(crate) timestamp_ms: Option<u128>,
+}
+
+pub(crate) fn list_backups(sqlite_path: &Path) -> Result<Vec<BackupEntry>> {
+    let backups_dir = sqlite_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("backups");
+    if !backups_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries: Vec<BackupEntry> = Vec::new();
+    for entry in fs::read_dir(&backups_dir)
+        .with_context(|| format!("failed to read {}", backups_dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("bak") {
+            continue;
+        }
+        let timestamp_ms = parse_backup_timestamp(&path);
+        entries.push(BackupEntry { path, timestamp_ms });
+    }
+    entries.sort_by(|a, b| b.timestamp_ms.cmp(&a.timestamp_ms));
+    Ok(entries)
+}
+
+fn parse_backup_timestamp(path: &Path) -> Option<u128> {
+    let name = path.file_stem()?.to_str()?;
+    let last_dot = name.rfind('.')?;
+    let ts_str = &name[last_dot + 1..];
+    ts_str.parse::<u128>().ok()
+}
+
+pub(crate) fn restore_sqlite_from_backup(sqlite_path: &Path, backup_path: &Path) -> Result<()> {
+    if !backup_path.exists() {
+        anyhow::bail!("backup file not found: {}", backup_path.display());
+    }
+    let source = Connection::open(backup_path)
+        .with_context(|| format!("failed to open backup {}", backup_path.display()))?;
+    source.query_row("SELECT COUNT(*) FROM threads", [], |_| Ok(()))?;
+
+    if sqlite_path.exists() {
+        fs::remove_file(sqlite_path)
+            .with_context(|| format!("failed to remove {}", sqlite_path.display()))?;
+    }
+    fs::copy(backup_path, sqlite_path).with_context(|| {
+        format!(
+            "failed to copy {} to {}",
+            backup_path.display(),
+            sqlite_path.display()
+        )
+    })?;
+    sync_file(sqlite_path)?;
+    if let Some(parent) = sqlite_path.parent() {
+        sync_dir(parent)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn prune_backups(entries: &[BackupEntry], keep: usize) -> Result<(usize, usize)> {
+    let parseable: Vec<&BackupEntry> = entries
+        .iter()
+        .filter(|e| e.timestamp_ms.is_some())
+        .collect();
+    if parseable.len() <= keep {
+        return Ok((0, parseable.len()));
+    }
+    let to_delete = &parseable[keep..];
+    let deleted = to_delete.len();
+    for entry in to_delete {
+        fs::remove_file(&entry.path)
+            .with_context(|| format!("failed to delete {}", entry.path.display()))?;
+    }
+    Ok((deleted, keep))
+}
+
 fn sqlite_missing_error(locale: Locale, path: &Path) -> String {
     match locale {
         Locale::En => format!(

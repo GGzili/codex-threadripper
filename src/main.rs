@@ -1,5 +1,6 @@
 use anyhow::Context;
 use anyhow::Result;
+use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -32,16 +33,30 @@ use output::launchd_plist_message;
 use output::next_steps_heading;
 use output::no_launchd_plist_message;
 use output::print_bucket_prepare_summary;
+use output::print_dry_run_summary;
 use output::print_install_service_summary;
 use output::print_status;
 use output::print_sync_summary;
+use output::prune_cancelled;
+use output::prune_complete;
+use output::prune_confirm_prompt;
+use output::prune_skipped_warning;
+use output::restore_cancelled;
+use output::restore_complete;
+use output::restore_confirm_prompt;
+use output::restore_list_title;
+use output::restore_no_backups;
 use output::run_status_next_step;
 use output::sync_complete_title;
 use output::uninstall_launchd_done;
 use rollout::RolloutProgressConfig;
 use rollout::RolloutScope;
 use rollout::prepare_bucket_padding;
+use state_db::list_backups;
+use state_db::prune_backups;
+use state_db::restore_sqlite_from_backup;
 use sync::collect_status;
+use sync::dry_run_sync;
 use sync::reconcile_once_with_backup_and_padding;
 use sync::reconcile_once_with_backup_progress;
 use watch::run_watch;
@@ -59,25 +74,38 @@ fn main() -> Result<()> {
                 collect_status(&codex_home, cli.provider.as_deref(), cli.profile.as_deref())?;
             print_status(locale, &summary);
         }
-        Command::Sync { sqlite_only } => {
+        Command::Sync {
+            sqlite_only,
+            dry_run,
+        } => {
             let rollout_scope = if sqlite_only {
                 RolloutScope::None
             } else {
                 RolloutScope::AllRows
             };
-            let progress = if sqlite_only {
-                None
+            if dry_run {
+                let summary = dry_run_sync(
+                    &codex_home,
+                    cli.provider.as_deref(),
+                    cli.profile.as_deref(),
+                    rollout_scope,
+                )?;
+                print_dry_run_summary(locale, &summary);
             } else {
-                Some(RolloutProgressConfig { locale })
-            };
-            let summary = reconcile_once_with_backup_progress(
-                &codex_home,
-                cli.provider.as_deref(),
-                cli.profile.as_deref(),
-                rollout_scope,
-                progress,
-            )?;
-            print_sync_summary(locale, sync_complete_title(locale), &summary);
+                let progress = if sqlite_only {
+                    None
+                } else {
+                    Some(RolloutProgressConfig { locale })
+                };
+                let summary = reconcile_once_with_backup_progress(
+                    &codex_home,
+                    cli.provider.as_deref(),
+                    cli.profile.as_deref(),
+                    rollout_scope,
+                    progress,
+                )?;
+                print_sync_summary(locale, sync_complete_title(locale), &summary);
+            }
         }
         Command::Bucket { command } => match command {
             BucketCommand::Prepare { padding_bytes } => {
@@ -145,6 +173,23 @@ fn main() -> Result<()> {
         Command::UninstallService => {
             uninstall_service(locale, &codex_home)?;
         }
+        Command::Restore {
+            backup_path,
+            latest,
+            force,
+        } => {
+            run_restore(
+                locale,
+                &codex_home,
+                cli.profile.as_deref(),
+                backup_path,
+                latest,
+                force,
+            )?;
+        }
+        Command::PruneBackups { keep, force } => {
+            run_prune_backups(locale, &codex_home, cli.profile.as_deref(), keep, force)?;
+        }
     }
 
     Ok(())
@@ -210,5 +255,112 @@ fn uninstall_service(locale: Locale, codex_home: &Path) -> Result<()> {
             no_launchd_plist_message(locale, &service_status.config_path)
         );
     }
+    Ok(())
+}
+
+fn run_restore(
+    locale: Locale,
+    codex_home: &Path,
+    profile_override: Option<&str>,
+    backup_path: Option<PathBuf>,
+    latest: bool,
+    force: bool,
+) -> Result<()> {
+    use crate::codex_config::resolve_sqlite_path;
+
+    let sqlite_path = resolve_sqlite_path(codex_home, profile_override)?;
+    let backups = list_backups(&sqlite_path)?;
+
+    let chosen_path = if let Some(path) = backup_path {
+        path
+    } else if latest {
+        let entry = backups
+            .iter()
+            .find(|e| e.timestamp_ms.is_some())
+            .ok_or_else(|| anyhow::anyhow!(restore_no_backups(locale)))?;
+        entry.path.clone()
+    } else {
+        if backups.is_empty() {
+            println!("{}", restore_no_backups(locale));
+            return Ok(());
+        }
+        println!("{}", restore_list_title(locale));
+        for entry in &backups {
+            let name = entry
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?");
+            if entry.timestamp_ms.is_some() {
+                println!("  {name}");
+            } else {
+                println!("  {name}  (unparseable timestamp)");
+            }
+        }
+        return Ok(());
+    };
+
+    if !force {
+        print!("{}", restore_confirm_prompt(locale, &chosen_path));
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("{}", restore_cancelled(locale));
+            return Ok(());
+        }
+    }
+
+    restore_sqlite_from_backup(&sqlite_path, &chosen_path)?;
+    println!("{}", restore_complete(locale, &chosen_path));
+    Ok(())
+}
+
+fn run_prune_backups(
+    locale: Locale,
+    codex_home: &Path,
+    profile_override: Option<&str>,
+    keep: usize,
+    force: bool,
+) -> Result<()> {
+    use crate::codex_config::resolve_sqlite_path;
+
+    let sqlite_path = resolve_sqlite_path(codex_home, profile_override)?;
+    let backups = list_backups(&sqlite_path)?;
+
+    for entry in &backups {
+        if entry.timestamp_ms.is_none() {
+            let name = entry
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?");
+            eprintln!("{}", prune_skipped_warning(locale, name));
+        }
+    }
+
+    let parseable: Vec<_> = backups
+        .iter()
+        .filter(|e| e.timestamp_ms.is_some())
+        .collect();
+    if parseable.len() <= keep {
+        println!("{}", prune_complete(locale, 0, parseable.len()));
+        return Ok(());
+    }
+
+    let to_delete_count = parseable.len() - keep;
+    if !force {
+        print!("{}", prune_confirm_prompt(locale, to_delete_count));
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("{}", prune_cancelled(locale));
+            return Ok(());
+        }
+    }
+
+    let (deleted, kept) = prune_backups(&backups, keep)?;
+    println!("{}", prune_complete(locale, deleted, kept));
     Ok(())
 }
